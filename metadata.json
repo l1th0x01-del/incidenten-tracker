@@ -1,0 +1,5 @@
+{
+  "name": "Vlaamse Verkeersveiligheid Monitor",
+  "description": "Een interactieve kaart die verkeersongevallen met zwakke weggebruikers in Vlaanderen visualiseert, verrijkt met AI-analyses.",
+  "requestFramePermissions": []
+}
