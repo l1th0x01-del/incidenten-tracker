@@ -26,10 +26,17 @@ const AddIncidentModal: React.FC<AddIncidentModalProps> = ({ onClose, onAdd }) =
       if (data && data.isValid) {
         setResult(data);
       } else {
-        setError("Kon geen geldig ongeval met een zwakke weggebruiker verifiëren via deze link. Controleer of het artikel openbaar is en over een relevant incident gaat.");
+        // Data came back but isValid was false
+        setError("Gemini kon geen specifiek ongeval met een zwakke weggebruiker bevestigen op deze pagina. Controleer of de link openbaar is.");
       }
-    } catch (e) {
-      setError("Er is een fout opgetreden bij de verificatie. Probeer het later opnieuw.");
+    } catch (e: any) {
+      // Handle technical errors (API key missing, JSON parse error, etc)
+      console.error("Verification error:", e);
+      if (e.message && e.message.includes("API Key")) {
+        setError("Configuratiefout: API Key ontbreekt. Controleer Vercel instellingen.");
+      } else {
+        setError("Kan de pagina niet analyseren. Mogelijk blokkeert de website AI-toegang of is de link ongeldig.");
+      }
     } finally {
       setIsVerifying(false);
     }

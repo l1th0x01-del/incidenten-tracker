@@ -1,10 +1,25 @@
 import { GoogleGenAI } from "@google/genai";
 import { Accident, DraftAccident, NewsArticle, RoadUserType } from "../types";
 
-// Initialize Gemini Client
-const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+// Initialize Gemini Client with safety check
+const apiKey = process.env.API_KEY;
+const ai = new GoogleGenAI({ apiKey: apiKey || 'DUMMY_KEY_FOR_BUILD' });
+
+// Helper to clean JSON string from Markdown
+const cleanJsonString = (text: string): string => {
+  let cleaned = text.trim();
+  // Remove markdown code blocks if present
+  if (cleaned.startsWith('```json')) {
+    cleaned = cleaned.replace(/^```json/, '').replace(/```$/, '');
+  } else if (cleaned.startsWith('```')) {
+    cleaned = cleaned.replace(/^```/, '').replace(/```$/, '');
+  }
+  return cleaned.trim();
+};
 
 export const analyzeAccident = async (accident: Accident): Promise<string> => {
+  if (!apiKey) return "API Key ontbreekt. Configureer uw Vercel Environment Variables.";
+
   try {
     const prompt = `
       Je bent een expert in verkeersveiligheid en infrastructuur in België.
@@ -31,11 +46,13 @@ export const analyzeAccident = async (accident: Accident): Promise<string> => {
     return response.text || "Geen analyse beschikbaar.";
   } catch (error) {
     console.error("Fout bij het ophalen van Gemini analyse:", error);
-    return "Er is een fout opgetreden bij het genereren van de analyse. Controleer uw internetverbinding of API-sleutel.";
+    return "Er is een fout opgetreden bij het genereren van de analyse. Controleer uw API-sleutel.";
   }
 };
 
 export const generateGeneralSafetyTips = async (): Promise<string> => {
+  if (!apiKey) return "API Key ontbreekt.";
+
   try {
     const prompt = `
       Geef 3 korte, essentiële veiligheidstips voor zwakke weggebruikers in Vlaanderen, gebaseerd op recente ongevalstrends.
@@ -55,6 +72,11 @@ export const generateGeneralSafetyTips = async (): Promise<string> => {
 }
 
 export const verifyArticleUrl = async (url: string): Promise<DraftAccident | null> => {
+  if (!apiKey) {
+    console.error("API Key is missing in verifyArticleUrl");
+    throw new Error("API Key ontbreekt. Voeg deze toe in Vercel instellingen.");
+  }
+
   try {
     const prompt = `
       Taak: Zoek naar informatie over het verkeersongeval dat wordt beschreven in of gelinkt is aan deze URL: ${url}.
@@ -63,7 +85,8 @@ export const verifyArticleUrl = async (url: string): Promise<DraftAccident | nul
       Stap 2: Zo ja, haal de details op.
       Stap 3: Schat de GPS coördinaten (lat/lng) zo nauwkeurig mogelijk op basis van de straatnaam en gemeente.
       
-      Output formaat: Geef ENKEL een JSON object terug (zonder markdown 'json' tags) met de volgende structuur:
+      Output formaat: Geef ENKEL een valide JSON object terug (GEEN markdown formatting, geen uitleg).
+      Structuur:
       {
         "isValid": boolean, (true als het een echt ongeval met zwakke weggebruiker is)
         "locationName": string, (bv. "Gent, Veldstraat")
@@ -84,6 +107,7 @@ export const verifyArticleUrl = async (url: string): Promise<DraftAccident | nul
     });
 
     const text = response.text || "";
+    const cleanText = cleanJsonString(text);
     
     // Log grounding metadata if available (for debugging/audit)
     const chunks = response.candidates?.[0]?.groundingMetadata?.groundingChunks;
@@ -91,23 +115,27 @@ export const verifyArticleUrl = async (url: string): Promise<DraftAccident | nul
       console.log("Grounding sources:", chunks);
     }
 
-    // Try to parse JSON from the text response
-    // Sometimes the model wraps in ```json ... ```
-    const jsonMatch = text.match(/\{[\s\S]*\}/);
-    if (jsonMatch) {
-      const jsonStr = jsonMatch[0];
-      const data = JSON.parse(jsonStr) as DraftAccident;
+    try {
+      const data = JSON.parse(cleanText) as DraftAccident;
       return data;
+    } catch (parseError) {
+      // Fallback: try to find JSON within the text if simple cleanup failed
+      const jsonMatch = text.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        return JSON.parse(jsonMatch[0]) as DraftAccident;
+      }
+      throw parseError;
     }
 
-    return null;
   } catch (error) {
     console.error("Error verifying URL:", error);
-    return null;
+    throw error; // Rethrow to show in UI
   }
 };
 
 export const findRelatedArticles = async (accident: Accident): Promise<NewsArticle[]> => {
+  if (!apiKey) return [];
+
   try {
     const prompt = `
       Zoek naar online nieuwsartikels en politieverslagen over dit specifieke verkeersongeval:
@@ -125,9 +153,6 @@ export const findRelatedArticles = async (accident: Accident): Promise<NewsArtic
       - "url": (string) De directe URL naar het artikel.
       - "source": (string) De naam van de nieuwsbron.
       - "date": (string, optioneel) Datum van publicatie.
-
-      Als je geen exacte match vindt, zoek naar zeer gelijkaardige incidenten in dezelfde periode en regio, maar vermeld dan in de titel dat het om een mogelijk gerelateerd artikel gaat.
-      Indien niets relevant gevonden wordt, geef een lege array [].
     `;
 
     const response = await ai.models.generateContent({
@@ -140,7 +165,7 @@ export const findRelatedArticles = async (accident: Accident): Promise<NewsArtic
     });
 
     const text = response.text || "[]";
-    const cleanText = text.replace(/```json|```/g, '').trim();
+    const cleanText = cleanJsonString(text);
     
     try {
        const articles = JSON.parse(cleanText);
